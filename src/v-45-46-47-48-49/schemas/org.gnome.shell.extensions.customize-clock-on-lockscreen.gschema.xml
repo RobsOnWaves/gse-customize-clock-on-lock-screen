@@ -99,7 +99,7 @@
     <key name="clock-style" type="s">
       <default>'digital'</default>
       <summary>Clock style</summary>
-      <description>Choose between digital or analog clock faces</description>
+      <description>Choose between digital text, analog hands, or LED ring clock faces</description>
     </key>
 
     <key name="command-output-font-family" type="s">

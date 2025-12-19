@@ -4,6 +4,8 @@ import GnomeDesktop from 'gi://GnomeDesktop';
 import Clutter from 'gi://Clutter';
 import Shell from 'gi://Shell';
 import GLib from 'gi://GLib';
+import Pango from 'gi://Pango';
+import PangoCairo from 'gi://PangoCairo';
 
 import {formatDateWithCFormatString} from 'resource:///org/gnome/shell/misc/dateUtils.js';
 import * as Config from 'resource:///org/gnome/shell/misc/config.js';
@@ -191,6 +193,9 @@ const ModifiedClock = GObject.registerClass(
                 if (this._clockStyle === 'analog') {
                     this._analogClock = this._createAnalogClock(size);
                     this.add_child(this._analogClock);
+                } else if (this._clockStyle === 'led') {
+                    this._ledClock = this._createLedClock(size);
+                    this.add_child(this._ledClock);
                 } else {
                     this.add_child(this._time);
                 }
@@ -247,19 +252,24 @@ const ModifiedClock = GObject.registerClass(
 
         _updateClock() {
             let date = new Date();
+            let timeText;
+            if (this._customTimeText?.startsWith('%')) {
+                let customTimeFormat = Shell.util_translate_time_string(this._customTimeText);
+                timeText = formatDateWithCFormatString(date, customTimeFormat);
+            } else if (this._customTimeText) {
+                timeText = this._customTimeText;
+            } else {
+                timeText = this._wallClock.clock.trim();
+            }
+            this._currentTimeText = timeText;
 
             // time
             if (this._clockStyle === 'analog') {
                 this._analogArea?.queue_repaint();
+            } else if (this._clockStyle === 'led') {
+                this._ledArea?.queue_repaint();
             } else {
-                if (this._customTimeText?.startsWith('%')) {
-                    let customTimeFormat = Shell.util_translate_time_string(this._customTimeText);
-                    this._time.text = formatDateWithCFormatString(date, customTimeFormat);
-                } else if (this._customTimeText) {
-                    this._time.text = this._customTimeText;
-                } else {
-                    this._time.text = this._wallClock.clock.trim();
-                }
+                this._time.text = timeText;
             }
 
             // date
@@ -299,6 +309,27 @@ const ModifiedClock = GObject.registerClass(
             this._analogArea.queue_repaint();
 
             return this._analogArea;
+        }
+
+        _createLedClock(size) {
+            const diameter = Math.max(200, size * 2);
+
+            this._ledArea = new St.DrawingArea({
+                style_class: 'unlock-dialog-led-clock',
+                x_align: Clutter.ActorAlign.CENTER,
+                y_align: Clutter.ActorAlign.CENTER,
+                width: diameter,
+                height: diameter,
+            });
+            this._ledArea.set_size(diameter, diameter);
+            this._ledArea.connect('repaint', area => {
+                const cr = area.get_context();
+                const [width, height] = area.get_surface_size();
+                this._paintLedClock(cr, width, height);
+            });
+            this._ledArea.queue_repaint();
+
+            return this._ledArea;
         }
 
         _paintAnalogClock(cr, width, height) {
@@ -366,6 +397,166 @@ const ModifiedClock = GObject.registerClass(
             cr.fill();
 
             cr.restore();
+        }
+
+        _paintLedClock(cr, width, height) {
+            const radius = Math.min(width, height) / 2 - 8;
+            const base = this._parseRgba(this._settings.get_string('time-font-color'),
+                {red: 1, green: 0, blue: 0, alpha: 1});
+            const accent = this._parseRgba(this._settings.get_string('hint-font-color'),
+                {red: 1, green: 0.2, blue: 0.2, alpha: 1});
+
+            const now = new Date();
+            const hours = (now.getHours() % 12) + now.getMinutes() / 60 + now.getSeconds() / 3600;
+            const minutes = now.getMinutes() + now.getSeconds() / 60;
+            const seconds = now.getSeconds();
+
+            const hourPos = (hours % 12) * 5;
+            const minutePos = Math.floor(minutes);
+            const secondPos = seconds;
+
+            const dotRadius = Math.max(2.5, radius * 0.05);
+            const baseAlpha = 0.1;
+            const litAlpha = 0.85;
+            const hourAlpha = 0.55;
+            const minuteAlpha = 0.75;
+
+            cr.save();
+            cr.translate(width / 2, height / 2);
+
+            // Subtle outer glow ring
+            cr.setSourceRGBA(base.red, base.green, base.blue, baseAlpha * 0.6);
+            cr.setLineWidth(dotRadius * 1.4);
+            cr.arc(0, 0, radius - dotRadius, 0, 2 * Math.PI);
+            cr.stroke();
+
+            // LED dots around the circle (seconds accumulate, minute/hour markers accent)
+            for (let i = 0; i < 60; i++) {
+                const angle = (Math.PI / 30) * i;
+                const x = (radius - dotRadius * 1.2) * Math.sin(angle);
+                const y = -(radius - dotRadius * 1.2) * Math.cos(angle);
+
+                let alpha = i <= secondPos ? litAlpha : baseAlpha;
+                let color = base;
+
+                if (i === minutePos) {
+                    alpha = Math.max(alpha, minuteAlpha);
+                    color = accent;
+                }
+                if (i === Math.floor(hourPos)) {
+                    alpha = Math.max(alpha, hourAlpha);
+                    color = accent;
+                }
+
+                cr.setSourceRGBA(color.red, color.green, color.blue, alpha);
+                cr.arc(x, y, dotRadius, 0, 2 * Math.PI);
+                cr.fill();
+            }
+
+            // Center digital time in 7-segment style (uses time color)
+            const timeText = this._currentTimeText || this._wallClock.clock.trim();
+            const maxWidth = width * 0.7;
+            const targetHeight = height * 0.25;
+            this._drawSevenSegmentText(cr, timeText, maxWidth, targetHeight,
+                {color: base, background: {red: 0, green: 0, blue: 0, alpha: 0}});
+
+            cr.restore();
+        }
+
+        _drawSevenSegmentText(cr, text, maxWidth, targetHeight, colors) {
+            const segments = {
+                '0': ['a', 'b', 'c', 'd', 'e', 'f'],
+                '1': ['b', 'c'],
+                '2': ['a', 'b', 'g', 'e', 'd'],
+                '3': ['a', 'b', 'c', 'd', 'g'],
+                '4': ['f', 'g', 'b', 'c'],
+                '5': ['a', 'f', 'g', 'c', 'd'],
+                '6': ['a', 'f', 'g', 'c', 'd', 'e'],
+                '7': ['a', 'b', 'c'],
+                '8': ['a', 'b', 'c', 'd', 'e', 'f', 'g'],
+                '9': ['a', 'b', 'c', 'd', 'f', 'g'],
+            };
+
+            let thickness = targetHeight * 0.08;
+            let length = targetHeight * 0.3;
+            let digitHeight = 2 * length + 3 * thickness;
+            let scaleH = targetHeight / digitHeight;
+            thickness *= scaleH;
+            length *= scaleH;
+            digitHeight = 2 * length + 3 * thickness;
+            let digitWidth = length + 2 * thickness;
+            let spacing = thickness * 1.4;
+            let colonWidth = thickness * 0.8;
+
+            const totalWidth = Array.from(text).reduce((sum, ch, idx) => {
+                if (ch === ':')
+                    return sum + colonWidth + (idx < text.length - 1 ? spacing : 0);
+                return sum + digitWidth + (idx < text.length - 1 ? spacing : 0);
+            }, 0);
+
+            const scaleW = totalWidth > maxWidth ? maxWidth / totalWidth : 1;
+            const scale = Math.min(1, scaleW);
+
+            thickness *= scale;
+            length *= scale;
+            digitWidth *= scale;
+            digitHeight *= scale;
+            spacing *= scale;
+            colonWidth *= scale;
+
+            let x = - (Array.from(text).reduce((sum, ch, idx) => {
+                if (ch === ':')
+                    return sum + colonWidth + (idx < text.length - 1 ? spacing : 0);
+                return sum + digitWidth + (idx < text.length - 1 ? spacing : 0);
+            }, 0)) / 2;
+            const y = -digitHeight / 2;
+
+            const drawSegment = (id) => {
+                switch (id) {
+                case 'a':
+                    cr.rectangle(x + thickness, y, length, thickness);
+                    break;
+                case 'b':
+                    cr.rectangle(x + thickness + length, y + thickness, thickness, length);
+                    break;
+                case 'c':
+                    cr.rectangle(x + thickness + length, y + 2 * thickness + length, thickness, length);
+                    break;
+                case 'd':
+                    cr.rectangle(x + thickness, y + 2 * length + 2 * thickness, length, thickness);
+                    break;
+                case 'e':
+                    cr.rectangle(x, y + 2 * thickness + length, thickness, length);
+                    break;
+                case 'f':
+                    cr.rectangle(x, y + thickness, thickness, length);
+                    break;
+                case 'g':
+                    cr.rectangle(x + thickness, y + length + thickness, length, thickness);
+                    break;
+                }
+            };
+
+            cr.setSourceRGBA(colors.color.red, colors.color.green, colors.color.blue, 0.9);
+            for (const ch of text) {
+                if (ch === ':') {
+                    const dotRadius = thickness * 0.7;
+                    cr.arc(x + colonWidth / 2, y + thickness * 1.2 + length * 0.6, dotRadius, 0, 2 * Math.PI);
+                    cr.fill();
+                    cr.arc(x + colonWidth / 2, y + digitHeight - (thickness * 1.2 + length * 0.6), dotRadius, 0, 2 * Math.PI);
+                    cr.fill();
+                    x += colonWidth + spacing;
+                    continue;
+                }
+
+                const segs = segments[ch] || [];
+                for (const id of segs) {
+                    cr.rectangle(0, 0, 0, 0); // reset path
+                    drawSegment(id);
+                    cr.fill();
+                }
+                x += digitWidth + spacing;
+            }
         }
 
         _parseRgba(value, fallback) {

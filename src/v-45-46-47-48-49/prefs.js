@@ -26,13 +26,14 @@ export default class CustomizeClockExtensionPreferences extends ExtensionPrefere
         });
 
         const clockStyleGroup = new Adw.PreferencesGroup({title: 'Clock Style'});
-        const styleOptions = ['digital', 'analog'];
+        const styleOptions = ['digital', 'analog', 'led'];
         const styleModel = new Gtk.StringList();
         styleModel.append('Digital (Text)');
         styleModel.append('Analog (Hands with seconds)');
+        styleModel.append('LED Ring (Digital core)');
         const styleRow = new Adw.ComboRow({
             title: 'Clock Style',
-            subtitle: 'Choose between the classic text clock or an analog face with a sweeping second hand',
+            subtitle: 'Choose text, analog hands, or a LED ring with center digits',
             model: styleModel,
         });
         const currentStyle = window._settings.get_string('clock-style');
