@@ -3,6 +3,7 @@ import GObject from 'gi://GObject';
 import GnomeDesktop from 'gi://GnomeDesktop';
 import Clutter from 'gi://Clutter';
 import Shell from 'gi://Shell';
+import GLib from 'gi://GLib';
 
 import {formatDateWithCFormatString} from 'resource:///org/gnome/shell/misc/dateUtils.js';
 import * as Config from 'resource:///org/gnome/shell/misc/config.js';
@@ -77,6 +78,7 @@ const ModifiedClock = GObject.registerClass(
                 style_class: 'unlock-dialog-clock-time',
                 x_align: Clutter.ActorAlign.CENTER,
             });
+            this._clockStyle = this._settings.get_string('clock-style');
 
             color = this._settings.get_string('time-font-color');
             size = this._settings.get_int('time-font-size');
@@ -185,9 +187,14 @@ const ModifiedClock = GObject.registerClass(
                 this.add_child(this._commandOutput);
                 this._createCommandText();
             }
-
-            if (!removeTime)
-                this.add_child(this._time);
+            if (!removeTime) {
+                if (this._clockStyle === 'analog') {
+                    this._analogClock = this._createAnalogClock(size);
+                    this.add_child(this._analogClock);
+                } else {
+                    this.add_child(this._time);
+                }
+            }
 
             if (!removeDate)
                 this.add_child(this._date);
@@ -219,6 +226,10 @@ const ModifiedClock = GObject.registerClass(
                     duration: CROSSFADE_TIME,
                 });
             });
+            this._clockTickId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 1, () => {
+                this._updateClock();
+                return GLib.SOURCE_CONTINUE;
+            });
 
             this._updateClock();
             this._updateHint();
@@ -238,13 +249,17 @@ const ModifiedClock = GObject.registerClass(
             let date = new Date();
 
             // time
-            if (this._customTimeText?.startsWith('%')) {
-                let customTimeFormat = Shell.util_translate_time_string(this._customTimeText);
-                this._time.text = formatDateWithCFormatString(date, customTimeFormat);
-            } else if (this._customTimeText) {
-                this._time.text = this._customTimeText;
+            if (this._clockStyle === 'analog') {
+                this._analogArea?.queue_repaint();
             } else {
-                this._time.text = this._wallClock.clock.trim();
+                if (this._customTimeText?.startsWith('%')) {
+                    let customTimeFormat = Shell.util_translate_time_string(this._customTimeText);
+                    this._time.text = formatDateWithCFormatString(date, customTimeFormat);
+                } else if (this._customTimeText) {
+                    this._time.text = this._customTimeText;
+                } else {
+                    this._time.text = this._wallClock.clock.trim();
+                }
             }
 
             // date
@@ -265,8 +280,119 @@ const ModifiedClock = GObject.registerClass(
                 : 'Click or press a key to unlock';
         }
 
+        _createAnalogClock(size) {
+            const diameter = Math.max(180, size * 2);
+
+            this._analogArea = new St.DrawingArea({
+                style_class: 'unlock-dialog-analog-clock',
+                x_align: Clutter.ActorAlign.CENTER,
+                y_align: Clutter.ActorAlign.CENTER,
+                width: diameter,
+                height: diameter,
+            });
+            this._analogArea.set_size(diameter, diameter);
+            this._analogArea.connect('repaint', area => {
+                const cr = area.get_context();
+                const [width, height] = area.get_surface_size();
+                this._paintAnalogClock(cr, width, height);
+            });
+            this._analogArea.queue_repaint();
+
+            return this._analogArea;
+        }
+
+        _paintAnalogClock(cr, width, height) {
+            const radius = Math.min(width, height) / 2 - 4;
+            const primary = this._parseRgba(this._settings.get_string('time-font-color'),
+                {red: 1, green: 1, blue: 1, alpha: 1});
+            const accent = this._parseRgba(this._settings.get_string('hint-font-color'),
+                {red: 1, green: 0.3, blue: 0.3, alpha: 1});
+
+            const now = new Date();
+            const hours = (now.getHours() % 12) + now.getMinutes() / 60 + now.getSeconds() / 3600;
+            const minutes = now.getMinutes() + now.getSeconds() / 60;
+            const seconds = now.getSeconds();
+
+            cr.save();
+            cr.translate(width / 2, height / 2);
+
+            // Clock face
+            cr.setLineWidth(Math.max(2, radius * 0.05));
+            cr.setSourceRGBA(primary.red, primary.green, primary.blue, primary.alpha * 0.6);
+            cr.arc(0, 0, radius, 0, 2 * Math.PI);
+            cr.strokePreserve();
+            cr.setSourceRGBA(primary.red, primary.green, primary.blue, primary.alpha * 0.1);
+            cr.fill();
+
+            // Hour ticks
+            cr.setLineWidth(Math.max(2, radius * 0.04));
+            cr.setSourceRGBA(primary.red, primary.green, primary.blue, primary.alpha * 0.7);
+            for (let i = 0; i < 12; i++) {
+                const angle = (Math.PI / 6) * i;
+                const inner = radius * 0.8;
+                const outer = radius * 0.95;
+                cr.moveTo(inner * Math.sin(angle), -inner * Math.cos(angle));
+                cr.lineTo(outer * Math.sin(angle), -outer * Math.cos(angle));
+            }
+            cr.stroke();
+
+            // Hour hand
+            cr.setLineWidth(Math.max(3, radius * 0.07));
+            const hourAngle = (Math.PI / 6) * hours;
+            cr.setSourceRGBA(primary.red, primary.green, primary.blue, primary.alpha);
+            cr.moveTo(0, 0);
+            cr.lineTo(radius * 0.5 * Math.sin(hourAngle), -radius * 0.5 * Math.cos(hourAngle));
+            cr.stroke();
+
+            // Minute hand
+            cr.setLineWidth(Math.max(2, radius * 0.05));
+            const minuteAngle = (Math.PI / 30) * minutes;
+            cr.moveTo(0, 0);
+            cr.lineTo(radius * 0.75 * Math.sin(minuteAngle), -radius * 0.75 * Math.cos(minuteAngle));
+            cr.stroke();
+
+            // Second hand
+            cr.setLineWidth(Math.max(1.5, radius * 0.03));
+            const secondAngle = (Math.PI / 30) * seconds;
+            cr.setSourceRGBA(accent.red, accent.green, accent.blue, accent.alpha);
+            cr.moveTo(0, 0);
+            cr.lineTo(radius * 0.82 * Math.sin(secondAngle), -radius * 0.82 * Math.cos(secondAngle));
+            cr.stroke();
+
+            // Center cap
+            cr.setLineWidth(1);
+            cr.arc(0, 0, radius * 0.05, 0, 2 * Math.PI);
+            cr.setSourceRGBA(primary.red, primary.green, primary.blue, primary.alpha);
+            cr.fill();
+
+            cr.restore();
+        }
+
+        _parseRgba(value, fallback) {
+            const match = value?.match(/rgba?\(([^)]+)\)/i);
+            if (!match) {
+                return fallback;
+            }
+
+            const parts = match[1].split(',').map(part => parseFloat(part.trim()));
+            if (parts.length < 3)
+                return fallback;
+
+            const [r, g, b, a = 1] = parts;
+            return {
+                red: isNaN(r) ? fallback.red : r / 255,
+                green: isNaN(g) ? fallback.green : g / 255,
+                blue: isNaN(b) ? fallback.blue : b / 255,
+                alpha: isNaN(a) ? fallback.alpha : a,
+            };
+        }
+
         destroy() {
             this._idleMonitor.remove_watch(this._idleWatchId);
+            if (this._clockTickId) {
+                GLib.source_remove(this._clockTickId);
+                this._clockTickId = null;
+            }
             super.destroy();
         }
     }
