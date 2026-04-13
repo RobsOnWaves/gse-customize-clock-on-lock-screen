@@ -7,7 +7,7 @@ import GLib from 'gi://GLib';
 import Pango from 'gi://Pango';
 import PangoCairo from 'gi://PangoCairo';
 
-import {formatDateWithCFormatString} from 'resource:///org/gnome/shell/misc/dateUtils.js';
+import { formatDateWithCFormatString } from 'resource:///org/gnome/shell/misc/dateUtils.js';
 import * as Config from 'resource:///org/gnome/shell/misc/config.js';
 
 import execCommunicate from './utils/getCommandOutput.js';
@@ -207,8 +207,8 @@ const ModifiedClock = GObject.registerClass(
             if (!removeHint)
                 this.add_child(this._hint);
 
-            this._wallClock = new GnomeDesktop.WallClock({time_only: true});
-            this._wallClock.connect('notify::clock', this._updateClock.bind(this));
+            this._wallClock = new GnomeDesktop.WallClock({ time_only: true });
+            this._wallClockConnectId = this._wallClock.connect('notify::clock', this._updateClock.bind(this));
 
             if (SHELL_VERSION >= 48) {
                 const backend = this.get_context().get_backend();
@@ -301,7 +301,7 @@ const ModifiedClock = GObject.registerClass(
                 height: diameter,
             });
             this._analogArea.set_size(diameter, diameter);
-            this._analogArea.connect('repaint', area => {
+            this._analogAreaConnectId = this._analogArea.connect('repaint', area => {
                 const cr = area.get_context();
                 const [width, height] = area.get_surface_size();
                 this._paintAnalogClock(cr, width, height);
@@ -322,7 +322,7 @@ const ModifiedClock = GObject.registerClass(
                 height: diameter,
             });
             this._ledArea.set_size(diameter, diameter);
-            this._ledArea.connect('repaint', area => {
+            this._ledAreaConnectId = this._ledArea.connect('repaint', area => {
                 const cr = area.get_context();
                 const [width, height] = area.get_surface_size();
                 this._paintLedClock(cr, width, height);
@@ -335,9 +335,9 @@ const ModifiedClock = GObject.registerClass(
         _paintAnalogClock(cr, width, height) {
             const radius = Math.min(width, height) / 2 - 4;
             const primary = this._parseRgba(this._settings.get_string('time-font-color'),
-                {red: 1, green: 1, blue: 1, alpha: 1});
+                { red: 1, green: 1, blue: 1, alpha: 1 });
             const accent = this._parseRgba(this._settings.get_string('hint-font-color'),
-                {red: 1, green: 0.3, blue: 0.3, alpha: 1});
+                { red: 1, green: 0.3, blue: 0.3, alpha: 1 });
 
             const now = new Date();
             const hours = (now.getHours() % 12) + now.getMinutes() / 60 + now.getSeconds() / 3600;
@@ -402,9 +402,9 @@ const ModifiedClock = GObject.registerClass(
         _paintLedClock(cr, width, height) {
             const radius = Math.min(width, height) / 2 - 8;
             const base = this._parseRgba(this._settings.get_string('time-font-color'),
-                {red: 1, green: 0, blue: 0, alpha: 1});
+                { red: 1, green: 0, blue: 0, alpha: 1 });
             const accent = this._parseRgba(this._settings.get_string('hint-font-color'),
-                {red: 1, green: 0.2, blue: 0.2, alpha: 1});
+                { red: 1, green: 0.2, blue: 0.2, alpha: 1 });
 
             const now = new Date();
             const hours = (now.getHours() % 12) + now.getMinutes() / 60 + now.getSeconds() / 3600;
@@ -458,7 +458,7 @@ const ModifiedClock = GObject.registerClass(
             const maxWidth = width * 0.7;
             const targetHeight = height * 0.25;
             this._drawSevenSegmentText(cr, timeText, maxWidth, targetHeight,
-                {color: base, background: {red: 0, green: 0, blue: 0, alpha: 0}});
+                { color: base, background: { red: 0, green: 0, blue: 0, alpha: 0 } });
 
             cr.restore();
         }
@@ -513,27 +513,27 @@ const ModifiedClock = GObject.registerClass(
 
             const drawSegment = (id) => {
                 switch (id) {
-                case 'a':
-                    cr.rectangle(x + thickness, y, length, thickness);
-                    break;
-                case 'b':
-                    cr.rectangle(x + thickness + length, y + thickness, thickness, length);
-                    break;
-                case 'c':
-                    cr.rectangle(x + thickness + length, y + 2 * thickness + length, thickness, length);
-                    break;
-                case 'd':
-                    cr.rectangle(x + thickness, y + 2 * length + 2 * thickness, length, thickness);
-                    break;
-                case 'e':
-                    cr.rectangle(x, y + 2 * thickness + length, thickness, length);
-                    break;
-                case 'f':
-                    cr.rectangle(x, y + thickness, thickness, length);
-                    break;
-                case 'g':
-                    cr.rectangle(x + thickness, y + length + thickness, length, thickness);
-                    break;
+                    case 'a':
+                        cr.rectangle(x + thickness, y, length, thickness);
+                        break;
+                    case 'b':
+                        cr.rectangle(x + thickness + length, y + thickness, thickness, length);
+                        break;
+                    case 'c':
+                        cr.rectangle(x + thickness + length, y + 2 * thickness + length, thickness, length);
+                        break;
+                    case 'd':
+                        cr.rectangle(x + thickness, y + 2 * length + 2 * thickness, length, thickness);
+                        break;
+                    case 'e':
+                        cr.rectangle(x, y + 2 * thickness + length, thickness, length);
+                        break;
+                    case 'f':
+                        cr.rectangle(x, y + thickness, thickness, length);
+                        break;
+                    case 'g':
+                        cr.rectangle(x + thickness, y + length + thickness, length, thickness);
+                        break;
                 }
             };
 
@@ -584,7 +584,21 @@ const ModifiedClock = GObject.registerClass(
                 GLib.source_remove(this._clockTickId);
                 this._clockTickId = null;
             }
-            super.destroy();
+
+            if (this._analogAreaConnectId) {
+                this._analogArea.disconnect(this._analogAreaConnectId);
+            }
+
+            if (this._ledAreaConnectId) {
+                this._ledArea.disconnect(this._ledAreaConnectId);
+            }
+
+            if (this._wallClockConnectId) {
+                this._wallClock.disconnect(this._wallClockConnectId);
+            }
+
+            if (this._)
+                super.destroy();
         }
     }
 );

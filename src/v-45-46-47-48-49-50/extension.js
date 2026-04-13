@@ -24,9 +24,9 @@ export default class CustomizeClockOnLockScreenExtension extends Extension {
         }
     }
 
-    // unlock-dialog is used in session-modes because this extension purpose is
-    // to tweak the clock on lock screen itself.
     disable() {
+        // unlock-dialog is used in session-modes because this extension purpose is
+        // to tweak the clock on lock screen itself.
         this._dialog._stack.remove_child(this._dialog._clock);
         this._dialog._stack.add_child(this._originalClock);
 
