@@ -92,7 +92,7 @@ export default class CustomizeClockExtensionPreferences extends ExtensionPrefere
         }));
         hintGroup.add(row);
 
-        const url = 'https://help.gnome.org/users/gthumb/stable/gthumb-date-formats.html.en';
+        const url = 'https://docs.gtk.org/glib/method.DateTime.format.html';
         const linkButton = Gtk.LinkButton.new_with_label(url, 'Web link for valid Date/Time Format Codes');
         linkButton.set_halign('left');
         row = new Adw.ActionRow({title: 'Note 2'});
